@@ -1,5 +1,15 @@
-image {
+.selected {
     /* color: red; */
     border: black 1px solid;
+    /* margin-left: auto; */
+    /* margin-right: auto; */
+    opacity: 0.5;
     /* opacity: 50%; */
+}
+
+
+#background {
+    background-color: black;
+    color: black;
+    /* opacity: 0.7; */
 }

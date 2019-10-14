@@ -6,12 +6,13 @@ extern crate gdk_pixbuf;
 use std::rc::Rc;
 use std::cell::RefCell;
 use std::fs::read_dir;
+use std::collections::HashSet;
 
 use gtk::prelude::*;
 use gio::prelude::*;
 use gdk_pixbuf::prelude::*;
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use gtk::{Application, ApplicationWindow, ScrolledWindow, Button, EventBox, Grid, GridBuilder, PositionType, Image, Orientation, Layout, LayoutBuilder, ResizeMode, NONE_ADJUSTMENT, Viewport, StyleContext, CssProvider};
 use gdk_pixbuf::{Pixbuf, InterpType};
 
@@ -39,16 +40,22 @@ macro_rules! clone {
 
 // Holds a loaded local image as gtk::Pixbuf and gtk::Image.
 #[derive(Debug)]
+#[derive(Clone)]
 struct LoadedImage {
     img: Image,
     pbuf: Pixbuf,
+    path: PathBuf,
+    selected: Rc<RefCell<bool>>,
+    eventbox: EventBox, 
+    // filename: String,
 }
 
 impl LoadedImage {
 
     // Creates a new LoadedImage, which stores a local image as both Image/Pixbuf
     // Specify a max height and the width will auto scale for the aspect ratio.
-    pub fn new<P: AsRef<Path>>(path: P, height: i32) -> Option<LoadedImage> {
+    // Also holds the original path as well as the Eventbox which contains the image.
+    pub fn new(path: PathBuf, height: i32) -> Option<LoadedImage> {
         let pbuf = match Pixbuf::new_from_file_at_scale(&path, -1, height, true) {
             Ok(p) => p,
             Err(e) => {
@@ -57,18 +64,64 @@ impl LoadedImage {
             },
         };
 
+        // Create image from Pixbuf.
         let img = Image::new_from_pixbuf(Some(&pbuf));
 
+
+        let (ebox, status) = LoadedImage::new_event_box(&false);
+
+        
         Some(LoadedImage {
             img,
-            pbuf
+            pbuf,
+            path,
+            selected: status,
+            eventbox: ebox,
         })
 
+    }
+
+    // Gets a new event box for current loadedimage.
+    pub fn get_new_event_box(&mut self) {
+        let (ebox, status) = LoadedImage::new_event_box(&self.selected.borrow());
+        ebox.add(&self.img);
+        self.eventbox = ebox;
+        self.selected = status;
+    }
+
+    // Creates a new Eventbox with a RefCell status.
+    pub fn new_event_box(selected: &bool) -> (EventBox, Rc<RefCell<bool>>) {
+        let ebox = EventBox::new();
+        let selected_status = Rc::new(RefCell::new(selected.to_owned()));
+
+        // Configure click handler for image.
+        ebox.connect_button_press_event(clone!(selected_status => move |w, e| {
+            let widget_style = w.get_style_context();
+            println!("clicked on: {:?} {:?}!", w, selected_status);   
+            match widget_style.has_class("selected") {
+                true => {
+                    widget_style.remove_class("selected");
+                    selected_status.replace(false);
+                },
+                false => {
+                    widget_style.add_class("selected");
+                    selected_status.replace(true);
+                },
+            }
+            Inhibit(false)
+        }));
+        (ebox, selected_status)
     }
 
 }
 
 
+struct PGrid {
+    
+}
+
+
+#[derive(Clone)]
 struct PhotoGrid {
     max_width: i32,
     max_height: i32,
@@ -78,14 +131,15 @@ struct PhotoGrid {
     photos: Vec<LoadedImage>,
 }
 
+
 impl PhotoGrid {
 
     // Create new instance of PhotoGrid with default params.
     pub fn new() -> PhotoGrid {
         let window = ScrolledWindow::new(NONE_ADJUSTMENT, NONE_ADJUSTMENT);
+        WidgetExt::set_name(&window, "background");
         let grid = Grid::new();
         grid.set_column_homogeneous(false);
-        // grid.set_row_homogeneous(true);
         grid.set_row_spacing(10);
         window.add(&grid);
         PhotoGrid {
@@ -120,16 +174,23 @@ impl PhotoGrid {
 
     // Testing function. Loads all local test photos n times.
     pub fn load_photos(&mut self, n: i32) {
+        
         for _ in 1..n {
+
             for fname in FILE_NAMES.iter() {
-                let mut image_path = String::from(FILE_PATH);
-                image_path.push_str(fname);
-                match LoadedImage::new(image_path, self.max_height/IMG_RATIO_TO_APP_HEIGHT) {
+
+                let mut path = PathBuf::from(FILE_PATH);
+                &path.push(fname);
+
+                match LoadedImage::new(path, self.max_height/IMG_RATIO_TO_APP_HEIGHT) {
                     Some(img) => self.photos.push(img),
                     None => continue
                 }
+
             }
+
         }
+
     }
 
     pub fn load_images_from_dir<P: AsRef<Path>>(&mut self, dir: P) {
@@ -169,28 +230,26 @@ impl PhotoGrid {
         let mut row_widths: Vec<i32> = Vec::new();
 
         // Iterate LoadedImages and add them into box rows.        
-        for p in self.photos.iter() {
+        for p in self.photos.iter_mut() {
             
-            // Put LoadedImage inside Eventbox.
-            let widget = EventBox::new();
-            widget.add(&p.img);
+            // Create new eventbox for each photo.            
+            p.get_new_event_box();
 
-            // Add click handler for Eventbox.
-            widget.connect_button_press_event(|w, e| {
-                // w.set_border_width(3);
-                println!("clicked: {:?} {:?}!", w, e);
-                Inhibit(false)
-            });
+            // Check if current LoadedImage was previously selected, if so add the selected class.
+            if *p.selected.borrow() {
+                let wstyle = p.eventbox.get_style_context();
+                wstyle.add_class("selected");
+            }
 
             let p_width = p.pbuf.get_width();
 
             // Image fits on current row.
             if p_width + row_width < self.max_width {
+
                 // Record row width updates and push the image to the current row. 
-                row_widths.push(p_width);
+                &row_widths.push(p_width);
                 row_width += p_width;
-                // &row.pack_end(&p.img, false, false, 0);
-                &row.pack_end(&widget, false, false, 0);
+                &row.pack_end(&p.eventbox, false, false, 0);
 
             // Image does not fit on current row.
             } else {
@@ -200,7 +259,7 @@ impl PhotoGrid {
                 let used_width: i32 = row_widths.iter().sum();
                 let spacing_amount = (self.max_width - used_width) / (row_widths.len() as i32);
                 row.set_spacing(spacing_amount);
-                rows.push(row);
+                &rows.push(row);
 
                 // Create new box for new row, and clear previous row's row_widths.
                 row = gtk::Box::new(Orientation::Horizontal, 0);
@@ -209,10 +268,7 @@ impl PhotoGrid {
                 // Push the new row width and pack the row to the new box.
                 row_widths.push(p_width);
                 row_width = p_width;
-
-                // Wrap picture in an event box then push to Box row.
-                // row.pack_end(&p.img, false, false, 0)
-                row.pack_end(&widget, false, false, 0)
+                row.pack_end(&p.eventbox, false, false, 0);
                 
             }
             
@@ -227,6 +283,7 @@ impl PhotoGrid {
 
 
 }
+
 
 const DEFAULT_HEIGHT: i32 = 1390;
 const DEFAULT_WIDTH: i32 = 1250;
@@ -257,8 +314,8 @@ fn main() {
         let pg = Rc::new(RefCell::new(PhotoGrid::new()));
 
         // Initial load/place of photos.
-        // pg.borrow_mut().load_images_from_dir("/home/cam/Downloads/desktop_walls");
-        pg.borrow_mut().load_photos(5);
+        pg.borrow_mut().load_images_from_dir("/home/cam/Downloads/desktop_walls");
+        // pg.borrow_mut().load_photos(5);
         pg.borrow_mut().place_photos();
 
         pg.borrow().window.set_redraw_on_allocate(true);
