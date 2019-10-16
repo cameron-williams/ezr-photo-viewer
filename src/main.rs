@@ -6,14 +6,13 @@ extern crate gdk_pixbuf;
 use std::rc::Rc;
 use std::cell::RefCell;
 use std::fs::read_dir;
-use std::collections::HashSet;
 
 use gtk::prelude::*;
 use gio::prelude::*;
 use gdk_pixbuf::prelude::*;
 
 use std::path::{Path, PathBuf};
-use gtk::{Application, ApplicationWindow, ScrolledWindow, Button, EventBox, Grid, GridBuilder, PositionType, Image, Orientation, Layout, LayoutBuilder, ResizeMode, NONE_ADJUSTMENT, Viewport, StyleContext, CssProvider};
+use gtk::{Application, ApplicationWindow, Button, ScrolledWindow, EventBox, Image, Layout,  NONE_ADJUSTMENT, StyleContext, CssProvider};
 use gdk_pixbuf::{Pixbuf, InterpType};
 
 const FILE_PATH: &str =  "/home/cam/Downloads/";
@@ -40,7 +39,6 @@ macro_rules! clone {
 
 // Holds a loaded local image as gtk::Pixbuf and gtk::Image.
 #[derive(Debug)]
-#[derive(Clone)]
 struct LoadedImage {
     img: Image,
     pbuf: Pixbuf,
@@ -66,9 +64,7 @@ impl LoadedImage {
         // Create image from Pixbuf.
         let img = Image::new_from_pixbuf(Some(&pbuf));
 
-
-        // let (ebox, status) = LoadedImage::new_event_box(&false);
-
+        // Create new eventbox to track image selection clicks.
         let ebox = EventBox::new();
         let selected_status = Rc::new(RefCell::new(false));
 
@@ -102,38 +98,6 @@ impl LoadedImage {
 
     }
 
-    // // Gets a new event box for current loadedimage.
-    // pub fn get_new_event_box(&mut self) {
-    //     let (ebox, status) = LoadedImage::new_event_box(&self.selected.borrow());
-    //     ebox.add(&self.img);
-    //     self.eventbox = ebox;
-    //     self.selected = status;
-    // }
-
-    // // Creates a new Eventbox with a RefCell status.
-    // pub fn new_event_box(selected: &bool) -> (EventBox, Rc<RefCell<bool>>) {
-    //     let ebox = EventBox::new();
-    //     let selected_status = Rc::new(RefCell::new(selected.to_owned()));
-
-    //     // Configure click handler for image.
-    //     ebox.connect_button_press_event(clone!(selected_status => move |w, e| {
-    //         let widget_style = w.get_style_context();
-    //         println!("clicked on: {:?} {:?}!", w, selected_status);   
-    //         match widget_style.has_class("selected") {
-    //             true => {
-    //                 widget_style.remove_class("selected");
-    //                 selected_status.replace(false);
-    //             },
-    //             false => {
-    //                 widget_style.add_class("selected");
-    //                 selected_status.replace(true);
-    //             },
-    //         }
-    //         Inhibit(false)
-    //     }));
-    //     (ebox, selected_status)
-    // }
-
 }
 
 
@@ -145,22 +109,34 @@ struct PGrid {
     row_spacing: i32,
     row_height: i32,
     last_rect: gtk::Rectangle,
-    images: Vec<LoadedImage>
+    images: Vec<LoadedImage>  // might have to wrap in a Rc<RefCell<>>
 }
 
 impl PGrid {
-    pub fn new() -> PGrid {
-        // might need to switch to a real vertical adjustment
+
+    pub fn new(width: i32, height: i32) -> PGrid {
         let layout = Layout::new(NONE_ADJUSTMENT, NONE_ADJUSTMENT);
         let window = ScrolledWindow::new(NONE_ADJUSTMENT, NONE_ADJUSTMENT);
 
+        let button = Button::new_with_label("Email Selected Photos");
+        layout.put(&button, 100, 100);
         window.add(&layout);
+        
+        // Cloned widgets for use in window.connect_scroll_event()
+        let button_clone = button.clone();
+        let layout_clone = layout.clone();
+
+        window.connect_scroll_event(move |s, e| {
+            println!("scrolled {:?} {:?}", s, e);
+            layout_clone.move_(&button_clone, 400, 400);
+            Inhibit(false)
+        });
 
         PGrid {
             layout,
             window,
-            max_height: DEFAULT_HEIGHT,
-            max_width: DEFAULT_WIDTH,
+            max_height: height,
+            max_width: width,
             row_spacing: 5,
             row_height: DEFAULT_HEIGHT / IMG_RATIO_TO_APP_HEIGHT,
             last_rect: gtk::Rectangle {x: 0, y: 0, width: DEFAULT_WIDTH, height: DEFAULT_HEIGHT},
@@ -205,68 +181,82 @@ impl PGrid {
         }
     }
 
-    pub fn redraw(&self, already_initialized: bool) {
-        // act as if layout is empty.
+
+    pub fn get_selected_images(&self) -> Vec<&LoadedImage> {
+        let mut selected: Vec<&LoadedImage> = Vec::new();
+
+        for i in self.images.iter() {
+            let style_context = i.eventbox.get_style_context();
+            if style_context.has_class("selected") {
+                &selected.push(&i);
+            }
+        }
+        selected
+    }
+
+
+    // Redraws all held images in self.images to layout according to self.max height/width.
+    pub fn redraw(&self, initialize: bool) {
         let mut current_row_index = 0;
         let mut current_row_width = 0;
         let mut current_row_items: Vec<&LoadedImage> = Vec::new();
 
-        // Iterate each image.
         for image in self.images.iter() {
             
             let image_width = image.pbuf.get_width();
 
-            // If the image fits in current row, add it.
-            if (image_width + current_row_width) < self.max_width {
-                &current_row_items.push(&image);
-                current_row_width += image_width;
-
-            // If the image does not fit in the current row, draw previous row and start with a new one.
-            } else {
-                
-                // Draw current row and increment row counter.
-                self.draw_row_from_vec(&current_row_items, current_row_index, already_initialized);
+            // If image does not fit in the current row, draw the current row and start from a new one.
+            if (image_width + current_row_width) >= self.max_width {
+                self.draw_row_from_vec(&current_row_items, current_row_index, initialize);
                 current_row_index += 1;
-
-                // Empty current row/width counter, and add the next image.
-                current_row_items.clear();
-                current_row_items.push(&image);
-                current_row_width = image_width;
+                current_row_width = 0;
+                &current_row_items.clear();
             }
+
+            &current_row_items.push(&image);
+            current_row_width += image_width;
+
+        }
+        
+        // Because rows don't always end with a max length we need to do 1 final check to see
+        // if there are any images left that haven't been drawn, and draw them in that case.
+        if current_row_items.len() > 0 {
+            self.draw_row_from_vec(&current_row_items, current_row_index, initialize);
+            current_row_index += 1;
+            &current_row_items.clear();
         }
 
-        println!("{:?}", (current_row_index * self.row_height));
+
+        // Set layout width/height. This is used to determine scrollbars by the ScrolledWindow.
         self.layout.set_size(self.max_width as u32, (current_row_index * self.row_height) as u32);
-        println!("{:?}", self.layout.get_size());
     }
 
-    pub fn draw_row_from_vec(&self, row: &Vec<&LoadedImage>, row_index: i32, already_initialized: bool) {
+    // Takes a &Vec<&LoadedImage> and draws it to the layout, calculating proper spacing between images.
+    pub fn draw_row_from_vec(&self, row: &Vec<&LoadedImage>, row_index: i32, initialize: bool) {
         
-        // Get number of images.
-        let n = row.len(); // 3
-
-        // get amount of free width to divide.
-        let mut free_space= self.max_width; // 300
+        // Determine how much free space we have for the current row. TODO:// Get rid of double .iter()?
+        let mut free_space= self.max_width;
         for r in row.iter() {
             free_space -= r.pbuf.get_width();
         }
 
-        // figure out spacing amount after each image placement
-        let spacing = free_space/(n as i32 +1); // 75
+        // Determine spacing.
+        let spacing = free_space/(row.len() as i32 +1);
+
         let mut x = spacing;
         let y = (self.row_height * row_index) + self.row_spacing;
 
+        // Iterate images and place or move them to their proper positions on the layout.
         for image in row.iter() {
-            // Place image.
-            match already_initialized {
-                false => {
+            match initialize {
+                true => {
                     self.layout.put(
                         &image.eventbox,
                         x,
                         y,
                     );
                 },
-                true => {
+                false => {
                     self.layout.move_(
                         &image.eventbox,
                         x,
@@ -285,6 +275,7 @@ impl PGrid {
 
 const DEFAULT_HEIGHT: i32 = 1390;
 const DEFAULT_WIDTH: i32 = 1250;
+
 // Ratio of img height to total app height, e.g 5 is 5:1 ratio
 const IMG_RATIO_TO_APP_HEIGHT: i32 = 7;
 
@@ -301,6 +292,7 @@ fn main() {
         // Set default title and size.
         window.set_title("First GTK+ Program");
         window.set_default_size(DEFAULT_WIDTH, DEFAULT_HEIGHT);
+        window.set_show_menubar(true);
 
         // Add "photo selected" css provider/context
         let css_provider = CssProvider::new();
@@ -309,15 +301,16 @@ fn main() {
         StyleContext::add_provider_for_screen(&window.get_screen().unwrap(), &css_provider, 1);
 
         // Initialize PhotoGrid in an Rc/RefCell
-        let pg = Rc::new(RefCell::new(PGrid::new()));
+        let pg = Rc::new(RefCell::new(PGrid::new(DEFAULT_WIDTH, DEFAULT_HEIGHT)));
+
 
         // Initial load/place of photos.
         pg.borrow_mut().load_images_from_dir("/home/cam/Downloads/desktop_walls");
-        pg.borrow().redraw(false);
+        pg.borrow().redraw(true);
 
         // Add the PhotoGrid to the main app window.
         window.add(&pg.borrow().window);
-        
+
         // Add allocation change (window size change) callback.
         pg.borrow().window.connect_size_allocate(clone!(pg => move |obj, rect| {
 
@@ -333,7 +326,7 @@ fn main() {
             pg.borrow_mut().max_width = rect.width;
 
             // Redraw photos.
-            pg.borrow().redraw(true);
+            pg.borrow().redraw(false);
 
         }));
 
