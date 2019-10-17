@@ -12,7 +12,7 @@ use gio::prelude::*;
 use gdk_pixbuf::prelude::*;
 
 use std::path::{Path, PathBuf};
-use gtk::{Application, ApplicationWindow, Button, ScrolledWindow, EventBox, Image, Layout,  NONE_ADJUSTMENT, StyleContext, CssProvider};
+use gtk::{Application, ApplicationWindow, Button, Grid, Orientation, ScrolledWindow, EventBox, Image, Layout,  NONE_ADJUSTMENT, StyleContext, CssProvider, FileChooserWidget, FileChooserAction, FileChooserButton};
 use gdk_pixbuf::{Pixbuf, InterpType};
 
 const FILE_PATH: &str =  "/home/cam/Downloads/";
@@ -119,7 +119,7 @@ impl PGrid {
         let window = ScrolledWindow::new(NONE_ADJUSTMENT, NONE_ADJUSTMENT);
 
         let button = Button::new_with_label("Email Selected Photos");
-        layout.put(&button, 100, 100);
+        layout.put(&button, 100, 700);
         window.add(&layout);
         
         // Cloned widgets for use in window.connect_scroll_event()
@@ -127,8 +127,13 @@ impl PGrid {
         let layout_clone = layout.clone();
 
         window.connect_scroll_event(move |s, e| {
-            println!("scrolled {:?} {:?}", s, e);
-            layout_clone.move_(&button_clone, 400, 400);
+            // println!("scrolled {:?} {:?}", s, e);
+            let adjustment = s.get_vadjustment().unwrap();
+            // println!("{:?}", s.get_vadjustment().unwrap().get_value());
+            let current_scroll_value = s.get_vadjustment()
+                                        .unwrap()
+                                        .get_value();
+            layout_clone.move_(&button_clone, 400, 700 + current_scroll_value as i32);
             Inhibit(false)
         });
 
@@ -167,7 +172,12 @@ impl PGrid {
 
     // Read and load images from specified path.
     pub fn load_images_from_dir<P: AsRef<Path>>(&mut self, dir: P) {
+        let mut count = 0;
         for entry in read_dir(dir).unwrap() {
+            // if count > 30 {
+            //     continue
+            // }
+            count += 1;
             match entry {
                 Ok(p) => {
                     match LoadedImage::new(p.path(), self.max_height/IMG_RATIO_TO_APP_HEIGHT) {
@@ -273,6 +283,7 @@ impl PGrid {
 }
 
 
+
 const DEFAULT_HEIGHT: i32 = 1390;
 const DEFAULT_WIDTH: i32 = 1250;
 
@@ -294,6 +305,8 @@ fn main() {
         window.set_default_size(DEFAULT_WIDTH, DEFAULT_HEIGHT);
         window.set_show_menubar(true);
 
+        // let global_layout = Layout::new(NONE_ADJUSTMENT, NONE_ADJUSTMENT);
+
         // Add "photo selected" css provider/context
         let css_provider = CssProvider::new();
         css_provider.load_from_path("/home/cam/Programming/rust/ezr-photo-viewer/src/app.css");
@@ -310,6 +323,11 @@ fn main() {
 
         // Add the PhotoGrid to the main app window.
         window.add(&pg.borrow().window);
+        // global_layout.add(&pg.borrow().window);
+
+        // let chooser = FileChooserButton::new("Select Photos Directory", FileChooserAction::SelectFolder);
+        // window.add(&chooser);
+        // window.add(&global_layout);
 
         // Add allocation change (window size change) callback.
         pg.borrow().window.connect_size_allocate(clone!(pg => move |obj, rect| {
