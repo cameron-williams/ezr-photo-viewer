@@ -8,5 +8,8 @@ edition = "2018"
 
 [dependencies]
 gtk = "0.7.0"
-gio = "0.7.0"
-gdk-pixbuf = "0.7.0"
+gio = { version = "0.7.0", features = ["futures"] }
+gdk-pixbuf = { version = "0.7.0", features = ["futures"] }
+glib = { version = "0.8.2", features = ["futures"] }
+futures = "0.3.1"
+tokio = { version = "0.2.2", features = ["full"] }
