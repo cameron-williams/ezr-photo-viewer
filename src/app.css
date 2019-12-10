@@ -7,6 +7,20 @@
     /* opacity: 50%; */
 }
 
+.test {
+    color: red;
+    background-color: black;
+}
+
+test {
+    color: red;
+    background-color: black;
+}
+
+layout * {
+    color: blue;
+    background-color: green;
+}
 
 #background {
     background-color: black;

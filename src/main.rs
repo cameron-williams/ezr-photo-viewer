@@ -2,16 +2,10 @@
 use std::fs::{read_dir, DirEntry};
 use std::io::Error;
 use std::path::{Path, PathBuf};
+
 use std::sync::{Arc, Mutex};
 
-
-extern crate tokio;
-use tokio::prelude::*;
-
-extern crate futures;
-use futures::future::{self, FutureExt, TryFutureExt};
-use futures::stream::{self, StreamExt};
-
+use std::rc::Rc;
 
 extern crate gdk_pixbuf;
 use gdk_pixbuf::prelude::*;
@@ -19,10 +13,7 @@ use gdk_pixbuf::Pixbuf;
 
 extern crate gio;
 use gio::prelude::*;
-use gio::Cancellable;
 
-extern crate glib;
-// use glib::prelude::*;
 
 extern crate gtk;
 use gtk::prelude::*;
@@ -58,35 +49,14 @@ struct LoadedImage {
     img: Image,
     pbuf: Pixbuf,
     path: PathBuf,
+    // parent: Arc<Mutex<Option<ImageRow>>>,
+    drawn: Arc<Mutex<bool>>,
     selected: Arc<Mutex<bool>>,
     eventbox: EventBox,
 }
 
 impl LoadedImage {
-    // fn new(path: PathBuf, height: i32) -> LoadedImage {
-        // println!("{:?}", path);
-        // let file = gio::File::new_for_path(path);
-        // println!("{:?}", file);
-        // file.read_async_future(glib::PRIORITY_DEFAULT)
-        //     .map_err(|(_file, err)| {
-        //         format!("Failed to open file: {}", err)
-        //     })
-        //     .and_then(move |(_file, stream)| {
-        //         println!("Opened stream: {}", stream)
-        //     }).await;
-        // let pbuf = Pixbuf::new_from_stream_at_scale_async(
-        //     file.read_async(0, gio::NONE_CANCELLABLE, ),
-        //     -1, height, true, gio::NONE_CANCELLABLE,
-        //     |a|{}
-        // );
-    // }
-    // async fn new_async_future(path: Pathbuf, height: i32) -> Option<LoadedImage> {
-
-    // }
-
-    // Creates a new LoadedImage, which stores a local image as both Image/Pixbuf
-    // Specify a max height and the width will auto scale for the aspect ratio.
-    // Also holds the original path as well as the Eventbox which contains the image.
+    
     pub fn new(path: PathBuf, height: i32) -> Option<LoadedImage> {
         let pbuf = match Pixbuf::new_from_file_at_scale(&path, -1, height, true) {
             Ok(p) => p,
@@ -98,15 +68,15 @@ impl LoadedImage {
 
         // Create image from Pixbuf.
         let img = Image::new_from_pixbuf(Some(&pbuf));
+        let drawn = Arc::new(Mutex::new(false));
 
         // Create new eventbox to track image selection clicks.
         let ebox = EventBox::new();
         let selected = Arc::new(Mutex::new(false));
-        // let selected = Rc::new(RefCell::new(false));
 
         ebox.add(&img);
 
-        // Configure click handler for image.
+        // Add click handler for image.
         ebox.connect_button_press_event(clone!(selected => move |w, e| {
             let widget_style = w.get_style_context();
             println!("clicked on: {:?} {:?}!", w, selected);
@@ -114,12 +84,10 @@ impl LoadedImage {
                 true => {
                     widget_style.remove_class("selected");
                     *selected.lock().unwrap() = false;
-                    // selected.replace(false);
                 },
                 false => {
                     widget_style.add_class("selected");
                     *selected.lock().unwrap() = true;
-                    // selected.replace(true);
                 },
             }
             Inhibit(false)
@@ -129,10 +97,19 @@ impl LoadedImage {
             img,
             pbuf,
             path,
-            selected: selected,
+            selected,
+            drawn,
             eventbox: ebox,
         })
 
+    }
+
+    fn width(&self) -> i32 {
+        self.pbuf.get_width()
+    }
+
+    fn height(&self) -> i32 {
+        self.pbuf.get_height()
     }
 }
 
@@ -302,13 +279,17 @@ impl PGrid {
 }
 
 struct EzrPhotoViewerApplication {
-    photos: Arc<Mutex<Vec<LoadedImage>>>,
+    // images: Rc<Vec<LoadedImage>>,
+    images: Arc<Mutex<Vec<LoadedImage>>>,
+    // images: Arc<Mutex<Vec<Arc<LoadedImage>>>>,
 }
 
 impl EzrPhotoViewerApplication {
     pub fn run() -> Arc<Self> {
         let ea = EzrPhotoViewerApplication {
-            photos: Arc::new(Mutex::new(Vec::new())),
+            // images: Rc::new(Vec::new());
+            // images: Ar
+            images: Arc::new(Mutex::new(Vec::new())),
         };
         AppWindow::new(Arc::new(ea))
     }
@@ -362,70 +343,6 @@ async fn load_images_from_dir<P: AsRef<Path>>(dir: P, limit: usize,) -> Arc<Mute
 }
 
 
-fn pixbuf_future_from_dir<P: AsRef<Path>>(dir: P) {
-    let file = gio::File::new_for_path(dir);
-                    // .read_async_future(glib::PRIORITY_DEFAULT)
-               
-    println!("file: {:?}", file);
-
-    // let file = block_on(file.read_async_future(glib::PRIORITY_DEFAULT));
-    println!("file: {:?}", file);
-
-    // 10
-    // file.await
-    // file.map_err()
-    // tokio::run(file);
-    // println!("{:?}", file);
-}
-
-
-#[derive(Clone)]
-struct AppWindow {
-    window: gtk::Window,
-    container: gtk::Box,
-}
-
-impl AppWindow {
-    fn new(main_app: Arc<EzrPhotoViewerApplication>) -> Arc<EzrPhotoViewerApplication> {
-        // Main window.
-        let window = gtk::Window::new(gtk::WindowType::Toplevel);
-
-        // gtk::ScrolledWindow is the main container which the top level window will hold. It will hold the rest of the application.
-        let scrolled_window = gtk::ScrolledWindow::new(NONE_ADJUSTMENT, NONE_ADJUSTMENT);
-        // Add automatic scrolling for vertical only.
-        scrolled_window.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
-        scrolled_window.set_border_width(0);
-
-        // Add a hbox to contain all dynamically added photo rows.
-        let hbox = gtk::Box::new(gtk::Orientation::Vertical, 0);
-        scrolled_window.add(&hbox);
-
-        // Add scrolled window to our main app window, set the app window size, and add a window size change callback.
-        window.add(&scrolled_window);
-        window.set_size_request(DEFAULT_WIDTH, DEFAULT_HEIGHT);
-        window.show_all();
-
-        // Add window resize callback
-        window.connect_size_allocate(clone!(window => move |obj, rect| {
-            println!("new allocation {:?}", rect);
-        }));
-
-        let app_window = Self {
-            window: window,
-            container: hbox,
-        };
-
-        Self::initialize_callbacks(&app_window);
-
-        main_app
-    }
-
-    fn initialize_callbacks(app_window: &Self) {
-        // app_window.connect_size_allocate(clone!(app_window => move |obj, rect| {
-        //     println!("new allocation {:?}", rect);
-        // }));
-    }
-}
 
 // Default application window size.
 const DEFAULT_HEIGHT: i32 = 1390;
@@ -435,158 +352,324 @@ const DEFAULT_WIDTH: i32 = 1250;
 const IMG_RATIO_TO_APP_HEIGHT: i32 = 7;
 
 
-fn async_read_open() {
-
+fn load_images_for_path<P: AsRef<Path>>(path: P, limit: bool) -> Vec<LoadedImage> {
+    // count to be removed
+    let mut count = 0;
+    read_dir(path)
+        .unwrap()
+        .filter_map(|e| {
+            if let Err(_) = e {
+                return None
+            }
+            // ( to be removed
+            if limit && count > 2 {
+                return None
+            }
+            count += 1;
+            // to be removed )
+            Some(e.unwrap())
+        })
+        .filter_map(|e| {
+            // LoadedImage already returns a Result so no need to wrap it in Some/None
+            println!("loading: {:?}", e.path());
+            LoadedImage::new(e.path(), 200)
+        })
+        .collect()
 }
 
-/// Validate that a std::fs::DirEntry is a valid file and within specified image limit.
-fn validate_dir_entry(entry: &Result<DirEntry, Error>, limit: usize, count: usize) -> bool {
-    if limit > 0 {
-        if count >= limit {
-            return false
+
+#[derive(Clone)]
+struct AppWindow {
+    window: gtk::Window,
+    // container: gtk::Box,
+    container: gtk::Layout,
+    dimensions: Arc<Mutex<(i32, i32)>>,
+    // dimensions: Mutex<(i32, i32)>,
+    application: Arc<EzrPhotoViewerApplication>,
+}
+
+impl AppWindow {
+    fn new(main_app: Arc<EzrPhotoViewerApplication>) -> Arc<EzrPhotoViewerApplication> {
+
+        // Main window.
+        let window = gtk::Window::new(gtk::WindowType::Toplevel);
+
+        let layout = gtk::Layout::new(
+            NONE_ADJUSTMENT,
+            NONE_ADJUSTMENT
+        );
+
+        // // gtk::ScrolledWindow is the main container which the top level window will hold. It will hold the rest of the application.
+        // let scrolled_window = gtk::ScrolledWindow::new(NONE_ADJUSTMENT, NONE_ADJUSTMENT);
+        // // Add automatic scrolling for vertical only.
+        // scrolled_window.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
+        // scrolled_window.set_border_width(0);
+
+        // // Add a hbox to contain all dynamically added photo rows.
+        // let hbox = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        // scrolled_window.add(&hbox);
+
+        // Load CSS.
+        let css_provider = gtk::CssProvider::new();
+        css_provider.load_from_path("/home/cam/Programming/rust/ezr-photo-viewer/src/app.css").expect("failed loading app CSS");
+        StyleContext::add_provider_for_screen(&window.get_screen().unwrap(), &css_provider, 1);
+
+        // Load images from directory.
+        println!("Reading images");
+        *main_app.images.lock().unwrap() = load_images_for_path("/home/cam/Downloads/desktop_walls", true);
+        
+        println!("OK: Read images");
+
+        // Add scrolled window to our main app window, set the app window size, and add a window size change callback.
+        // window.add(&scrolled_window);
+        window.add(&layout);
+
+        window.set_size_request(DEFAULT_WIDTH, DEFAULT_HEIGHT);
+        window.show_all();
+
+        let app_window = Arc::new(Self {
+            window: window,
+            // container: hbox,
+            container: layout,
+            // dimensions: Mutex::new((0, 0)),
+            dimensions: Arc::new(Mutex::new((0, 0))),
+            application: Arc::clone(&main_app),
+        });
+
+        Self::draw_photos(Arc::clone(&app_window));
+
+
+        println!("Initializing callbacks");
+        Self::initialize_callbacks(Arc::clone(&app_window));
+    
+        main_app
+    }
+
+    fn initialize_callbacks(app_window: Arc<Self>) {
+
+        // Add callback for resizing photos on new window dimensions.
+        app_window.window.connect_size_allocate(clone!(app_window => move |obj, rect| {
+
+            if *app_window.dimensions.lock().unwrap() != (rect.width, rect.height) {
+                
+                *app_window.dimensions.lock().unwrap() = (rect.width, rect.height);
+                
+                Self::draw_photos(Arc::clone(&app_window));
+
+            }
+
+        }));
+
+        println!("Initialized callbacks.")
+
+    }
+
+    // This function will draw/redraw all photos to the layout.
+    fn draw_photos(app_window: Arc<Self>) {
+        println!("drawing");
+        for img in app_window.application.images.lock().unwrap().iter() {
+            println!("{:?}", img);
+            app_window.container.add(&img.eventbox);
+        }
+        app_window.window.show_all();
+    }
+
+    // fn _draw_photos(app_window: Arc<Self>) {
+    //     println!("drawing!");
+    //     let row_height = DEFAULT_HEIGHT / IMG_RATIO_TO_APP_HEIGHT;
+    //     let max_width = app_window.dimensions.lock().unwrap().0;
+    //     let row_spacing = 10;
+
+    //     let mut current_row_index = 0;
+    //     let mut current_row_width = 0;
+    //     let mut current_row_items: Vec<&Arc<LoadedImage>> = Vec::new();
+
+    //     let images = &*app_window.application.images.lock().unwrap();
+
+    //     for image in images {
+
+    //         // Check if image will fit in current row, if it won't draw current row and start from a new row.
+    //         if (image.width() + current_row_width) >= max_width {
+    //             Self::draw_to_layout_from_vec(
+    //                 &app_window.container,
+    //                 &current_row_items,
+    //                 current_row_index,
+    //                 row_height,
+    //                 row_spacing
+    //             );
+    //             current_row_index += 1;
+    //             current_row_width = 0;
+    //             &current_row_items.clear();
+    //         }
+
+    //         // Push current image to row items and update the total current row width.
+    //         &current_row_items.push(image);
+    //         current_row_width += image.width();
+    //     }
+
+    //     // Rows don't always end with a max length, as such check if the current row has anything and draw it if it does.
+    //     if current_row_items.len() > 0 {
+    //         Self::draw_to_layout_from_vec(
+    //             &app_window.container,
+    //             &current_row_items,
+    //             current_row_index,
+    //             row_height,
+    //             row_spacing
+    //         );
+    //         current_row_index += 1;
+    //     }
+
+    //     app_window.container.set_size(
+    //         max_width as u32,
+    //         (current_row_index * row_height) as u32,
+    //     )
+
+    // }
+
+    // fn draw_to_layout_from_vec(layout: &gtk::Layout, row: &Vec<&Arc<LoadedImage>>, row_index: i32, row_height: i32, row_spacing: i32) {
+    //     // Get max width and determine how much free space we have for the current row from that.
+    //     let free_space = layout.get_size().0
+    //                         - row.iter()
+    //                             .fold(0, |sum, i| {sum + i.width()}) as u32;
+
+    //     // Set spacing.
+    //     let spacing: u32 = free_space / (row.len() as u32 + 1);
+
+    //     // Determine initial x/y positioning.
+    //     let mut pos_x = spacing as i32;
+    //     let pos_y = (row_height * row_index) + row_spacing;
+
+    //     // Put or move all images to their proper positions.
+    //     for image in row {
+    //         match *image.drawn.lock().unwrap() {
+    //             true => {
+    //                 layout.put(&image.eventbox, pos_x, pos_y);
+    //             },
+    //             false => {
+    //                 layout.move_(&image.eventbox, pos_x, pos_y);
+    //             }
+    //         }
+    //         // Update the next placement's pos_x accordingly.
+    //         pos_x += image.width() + spacing as i32;
+    //     }  
+
+    // }
+
+
+    // fn _draw_photos(app_window: Arc<Self>) {
+
+    //     // Iterate any existing rows and remove images from any parent so they can be redrawn.
+    //     app_window.container.foreach(|w| {
+    //         println!("removing: {:?}", w);
+    //         app_window.container.remove(w);
+    //     });
+        
+    //     // Holds full ImageRows
+    //     let mut completed_rows: Vec<ImageRow> = Vec::new();
+    //     let mut current_row = ImageRow::new(DEFAULT_WIDTH);
+
+    //     // Get the currently loaded images.
+    //     let images = &*app_window.application.images.lock().unwrap();
+    //     for img in images {
+    //         println!("iter an image to try and make it");
+            
+    //         // Add image to current row, or if it doesn't fit create a new row and add it to that row.
+    //         match current_row.try_push_image(Arc::clone(img)) {
+    //             Some(i) => {
+    //                 completed_rows.push(current_row);
+    //                 current_row = ImageRow::new(DEFAULT_WIDTH);
+    //                 current_row.try_push_image(i);
+    //             },
+    //             None => {println!("added image to a row")}
+    //         }
+    //     }
+
+    //     // Check if there is a leftover row that hasn't been added to the completed rows vec yet.
+    //     if *current_row.current_width.lock().unwrap() > 0 {
+    //         completed_rows.push(current_row);
+    //     }
+        
+    //     // Build rows and add them to the main application container.
+    //     for row in completed_rows {
+    //         println!("adding completed row");
+    //         app_window.container.pack_start(
+    //             &row.build(),
+    //             false,
+    //             false,
+    //             5
+    //         );
+    //         println!("added completed row");
+    //     }
+    //     app_window.container.show_all();
+    //     println!("{:?}", images.len());
+        
+    // }
+}
+
+/// ImageRow represents a future row of images that will be constructed 
+/// and placed onto the application window.
+#[derive(Debug)]
+struct ImageRow {
+    current_width: Mutex<i32>,
+    max_width: i32,
+    images: Arc<Mutex<Vec<Arc<LoadedImage>>>>,
+}
+
+impl ImageRow {
+
+    fn new(max_width: i32) -> ImageRow {
+        ImageRow {
+            current_width: Mutex::new(0),
+            images: Arc::new(Mutex::new(Vec::new())),
+            max_width,
         }
     }
-    if let Err(_) = entry {
-        return false
+
+    // Consumes the ImageRow to build a gtk::Box with the images added.
+    fn build(self) -> gtk::Box {
+        let row = gtk::Box::new(Orientation::Horizontal, 10);
+        row.set_homogeneous(false);
+
+        for img in &*self.images.lock().unwrap() {
+            
+            row.pack_start(
+                &img.eventbox,
+                true,
+                false,
+                10,
+            );
+        }
+
+        row
     }
 
-    true
-}
+    /// Attempts to add given LoadedImage to current row.
+    /// If the row can fit the image, consume the image ref and add it to the images vec, returning None.
+    /// If the row cannot fit the image will return the image wrapped as Some(img)
+    fn try_push_image(&self, img: Arc<LoadedImage>) -> Option<Arc<LoadedImage>> {
+        let mut current_width = self.current_width.lock().unwrap();
 
-async fn async_test<P: AsRef<Path>>(path: P, loaded_images: Arc<Mutex<Vec<LoadedImage>>>, limit: usize) {
+        // TODO need to add calculation to include row padding when checking if it can fit
+        if *current_width + img.width() <= self.max_width {
 
-    // need to limit # of open files
+            // Update width to include the newly added image.
+            *current_width += img.width();
 
-    // let mut pixbufs: Vec<_> = Vec::new();
-    let mut count = 0;
+            // Push image to current row's vec.
+            let mut images = self.images.lock().unwrap();
+            images.push(img);
+            None
 
-    let filenames: Vec<PathBuf> = read_dir(path)
-                                .unwrap()
-                                .filter_map(|e| {
-                                    if validate_dir_entry(&e, limit, count) {
-                                        count += 1;
-                                        Some(e.unwrap().path())
-                                    } else {
-                                        None
-                                    }
-                                })
-                                .collect();
-
-    let mut pixbufs: Vec<Result<Pixbuf, ()>> = Vec::new();
-
-    // Create and await futures in chunks of 50 filenames.
-    for chunk in filenames.chunks(50) {
-
-        let resolved = future::join_all(chunk.iter()
-                .map(|p| {
-                    gio::File::new_for_path(p)
-                        .read_async_future(glib::PRIORITY_DEFAULT)
-                        .map_err(|err| {println!("Error opening: {:?}", err)})
-                        .and_then(|res| {
-                            Pixbuf::new_from_stream_async_future(&res)
-                                    .map_err(|p_err| { println!("Error creating pixbuf: {:?}", p_err); })
-                        })
-                })
-            ).await;
-
-        pixbufs.extend(resolved);
-        
-        // future::join_all(futures).await;
-                    
-        
-    
+        } else { Some(img)}
     }
-    println!("{:?}", pixbufs);
-    println!("{:?}", pixbufs.len());
-    // println!("{:?}", filenames);
-    // for chunk in &read_dir(path).unwrap()
-    //             // Apply filter condition to check if dir entry is valid, and if we are under max photo limit.
-    //             .filter(|i| {
-    //                 if limit > 0 {
-    //                     let valid = match i {
-    //                         Ok(i) => {
-    //                             count += 1;
-    //                             true
-    //                         },
-    //                         Err(_) => false,
-    //                     };
-    //                     let under_limit = limit > 0 && count <= limit;
-    //                     valid && under_limit
-    //                 } else { true }
-    //             })
-    //             // Can remove enumerate/inspect once not testing
-    //             .enumerate()
-    //             .inspect(|(i, e)| {
-    //                 println!("{:?}", e)
-    //             })
-    //             // Create file (which will return a future, can probably move to it's own func after) for each dir entry.
-    //             .map(|(i, e)| {
-    //                 gio::File::new_for_path(e.unwrap().path())
-    //                                 // Create future for file read.
-    //                                 .read_async_future(glib::PRIORITY_DEFAULT)
-    //                                 .map_err(move |err| { println!("err loading: {} {:?}", i, err )})
-    //                                 .map_ok(move |res| {
-    //                                     println!("loaded: {} {:?}", i, res);
-    //                                     res
-    //                                 })
-    //                                 // Chain future to Pixbuf creation. Load pixbuf from file stream when completed.
-    //                                 .and_then(move |res| {
-    //                                     Pixbuf::new_from_stream_async_future(&res)
-    //                                         .map_err(move |er| {println!("err creating pixbuf: {} {:?}", i, er)})
-    //                                         .map_ok(move |re| {println!("created pixbuf: {} {:?}", i, re); re})
-    //                                 })
-    //             }).chunks(200) {
-    //                 &pixbufs.extend(future::join_all(chunk.collect::<Vec<_>>()).await);
-                    
-    // }
-    // println!("{:?}", pixbufs);
-                // Collect futures.
-                // .collect();
-    
-    // iter dir and create futures for each entry, then collect 
-    // println!("{}", futures.len());
-    println!("running..");
-    // futures.chunk
-    // println!("{:?}", futures);
-    // let takes: Vec<usize> = futures.chunks(200).map(|chunk| chunk.len()).collect();
 
-    // let futures = futures.into_iter();
-    // for t in takes {
-    //     &futures.take(t);
-    // }
-    // future::join_all(futures).await;
-    // let file = gio::File::new_for_path(path)
-    //                 .read_async_future(glib::PRIORITY_DEFAULT)
-    //                 .map_err(|err| { println!("err loading: {:?}", err )})
-    //                 .map_ok(|res| { println!("loaded: {:?}", res); res });
-    // let file = file.await;
-    // println!("{:?}", file);
-    println!("ran?");
 }
 
-
-
-/// glib 
-/// needs to either be 1 function with no return that takes a dir and arc mutex to house all loaded images,
-/// or need to iter spawn local for each function which loads 1 photo path and adds it to arc mutex
-
-
-#[tokio::main]
-async fn main() {
-
+fn main() {
 
     if let Ok(_) = gtk::init() {
-        // load_images_from_dir("/home/cam/Downloads/desktop_walls", 0).await;, 100
 
-        let loaded_images =  Arc::new(Mutex::new(Vec::new()));
-        let li_clone = loaded_images.clone();
-        let c = glib::MainContext::default();
-        c.spawn_local(async_test("/home/cam/Downloads/desktop_walls", li_clone, 0));
-        println!("spawned?");
-        // assert_eq!(xx, Ok(9));
-        // println!("ye {}", xx);
-        // thread_load_images_from_dir("/home/cam/Downloads/desktop_walls", 0);
-        // EzrPhotoViewerApplication::run();
+        EzrPhotoViewerApplication::run();
         gtk::main();
     }
     // // Create application.
