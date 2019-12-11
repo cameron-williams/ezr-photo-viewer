@@ -1,11 +1,11 @@
 ## ezr-photo-viewer Todo list
 
-<br><br><br><br><br><br>
+
 
 ### 1. User input image directory.
 This will be added after the basic menubar, since the menubar is required to actually put this function anywhere.
 
-<br><br><br><br><br><br>
+
 
 ### 2. Basic menubar with options for emailing selected photos and changing/adding image directories?
 Add a basic menu bar, this needs to have options to email selected photos and changing the image directory.
@@ -13,15 +13,10 @@ Add a basic menu bar, this needs to have options to email selected photos and ch
 
 
 
-<br><br><br><br><br><br>
-
-
 ### 3. Ability to have multiple image directories.
 
 This will likely be a basic filechooser with menu options to either add directories or remove directories, perhaps a directory list on the left/right side of the main screen? 
 
-
-<br><br><br><br><br><br>
 
 
 ### 4. General style improvements.
@@ -32,27 +27,27 @@ TopLevelWindow background (color or img or something?)
 Borders or some sort of more noticable separation between/around images.
 
 
-<br><br><br><br><br><br>
 
 ### 5. Add date separators into main view.
 Like in Microsoft Photos, add separators for each month or something? Also like how google photos does it.
 
 
-<br><br><br><br><br><br>
 
 ### 6. Add photo information sidebar to the popup window.
 Add a basic sidebar that displays photo metadata such as date taken and where it was taken and all that.
 
-
-<br><br><br><br><br><br>
 
 
 ### 7. Run tests on another OS, or at least a linux that doesn't use a tiling window system.
 It's hard to gage how everything will act on a non window tiling system such as ubuntu which is the main target OS, so I need to run some tests to see how the application reacts to it, seeing as how I've developed the whole thing using i3.
 
 
-<br><br><br><br><br><br>
 
 ### 8. Add a loading icon or modal or whatever when the program is loading images from directory.
 Also need to move the image loading to after the main window is created since it doesn't actually
 show any windows until the images are done loading.
+
+
+
+### 9. Change project file/folder structure around so it's more rusty.
+Haven't separated any structs into separate files or anything like that, which is the rust way to do things as the book explained. Will need to do that at some point to get some practice.
