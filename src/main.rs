@@ -67,7 +67,6 @@ struct LoadedImage {
 }
 
 impl LoadedImage {
-    
     pub fn new(path: PathBuf, height: i32) -> Option<LoadedImage> {
         let pbuf = match Pixbuf::new_from_file_at_scale(&path, -1, height, true) {
             Ok(p) => p,
@@ -174,7 +173,6 @@ struct AppWindow {
 
 impl AppWindow {
     fn new(main_app: Arc<EzrPhotoViewerApplication>) -> Arc<EzrPhotoViewerApplication> {
-        
         // Initialize main app window, css providers and widget callbacks.
         let app_window = Self::init_main_window(Arc::clone(&main_app));
         Self::init_css_providers(Arc::clone(&app_window));
@@ -252,14 +250,14 @@ impl AppWindow {
         app_window
             .dir_chooser
             .connect_file_set(clone!(app_window => move |_w| {
-                Self::refresh_image_window(Arc::clone(&app_window))
+                Self::refresh_image_window(Arc::clone(&app_window));
             }));
 
         // Add callback for emailing selected photos.
         app_window
             .email_btn
             .connect_clicked(clone!(app_window => move |_w| {
-                Self::email_selected_images(Arc::clone(&app_window))
+                Self::email_selected_images(Arc::clone(&app_window));
             }));
 
         // Add callback for resizing photos on new window dimensions.
@@ -334,7 +332,6 @@ impl AppWindow {
 
     // This function will draw/redraw all photos to the layout.
     fn draw_photos(app_window: Arc<Self>) {
-        
         // Row height is determined by the default height/img ratio consts, as this
         // was what was used to initially load the images.
         let row_height = DEFAULT_HEIGHT / IMG_RATIO_TO_APP_HEIGHT;
