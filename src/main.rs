@@ -309,29 +309,29 @@ impl AppWindow {
     }
 
     fn email_selected_images(app_window: Arc<Self>) {
-
         // Thunderbird expects attachments to be formatted like attachment='file:///,file:///,file:///'
         let mut attachment_str: String = app_window
             .application
             .images
             .borrow()
             .iter()
-            .filter_map(|i| {
-                match *i.selected.borrow() {
-                    true => Some(format!("file://{},", i.path.to_str().unwrap())),
-                    false => None,
-                }
+            .filter_map(|i| match *i.selected.borrow() {
+                true => Some(format!("file://{},", i.path.to_str().unwrap())),
+                false => None,
             })
             .collect();
         // pop trailing comma off
         attachment_str.pop();
 
         // Open new thunderbird compose email with attachments selected in it.
-        match std::process::Command::new("thunderbird").arg("--compose").arg(format!("attachment='{}'", attachment_str)).spawn() {
-            Ok(_) => {},
+        match std::process::Command::new("thunderbird")
+            .arg("--compose")
+            .arg(format!("attachment='{}'", attachment_str))
+            .spawn()
+        {
+            Ok(_) => {}
             Err(e) => eprintln!("Failed to open thunderbird: {:?}", e),
         }
-        
     }
 
     // This function will draw/redraw all photos to the layout.
