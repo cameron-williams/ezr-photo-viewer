@@ -136,7 +136,6 @@ impl LoadedImage {
     /// When called will flip the selected status for specified EventBox.
     fn toggle_selected(w: &EventBox, selected: Rc<RefCell<bool>>) {
         let widget_style = w.get_style_context();
-        println!("clicked on: {:?} {:?}!", w, selected);
         match widget_style.has_class("selected") {
             true => {
                 widget_style.remove_class("selected");
@@ -154,10 +153,7 @@ impl LoadedImage {
     /// that has the same dimensions as the original photo.
     ///
     /// Likely will add more functionality to this later. Such as the ability to go to the next photo.
-    fn handle_double_click(w: &EventBox, path: &PathBuf) {
-        println!("double clicked image, need to pop it now");
-        println!("{:?}\n{:?}", w, path);
-
+    fn handle_double_click(_w: &EventBox, path: &PathBuf) {
         match Self::new_as_popup(path) {
             Ok(window) => window.show_all(),
             Err(err) => eprintln!("failed to create popup window: {:?}", err),
@@ -170,52 +166,81 @@ impl LoadedImage {
 struct AppWindow {
     window: gtk::Window,
     container: gtk::Layout,
+    dir_chooser: gtk::FileChooserButton,
+    email_btn: gtk::Button,
     dimensions: Rc<RefCell<(i32, i32)>>,
     application: Arc<EzrPhotoViewerApplication>,
 }
 
 impl AppWindow {
     fn new(main_app: Arc<EzrPhotoViewerApplication>) -> Arc<EzrPhotoViewerApplication> {
-        // Main window.
+        // Get application config.
+        // Self::config();
+
+        // Initialize main app window, css providers and widget callbacks.
+        let app_window = Self::init_main_window(Arc::clone(&main_app));
+        Self::init_css_providers(Arc::clone(&app_window));
+        Self::initialize_callbacks(Arc::clone(&app_window));
+
+        // Refresh the image window, if there is a directory already selected it will load from there or just stay blank.
+        Self::refresh_image_window(Arc::clone(&app_window));
+        main_app
+    }
+
+    fn init_main_window(main_app: Arc<EzrPhotoViewerApplication>) -> Arc<Self> {
+        // Highest level window widget. Holds the ScrollableWindow.
         let window = gtk::Window::new(gtk::WindowType::Toplevel);
 
-        // Base layout which will hold all the images. Set the initial size to default.
+        // Headerbar for top level window.
+        let hb = gtk::HeaderBar::new();
+        hb.set_title(Some("ezr-photo-viewer"));
+        hb.set_show_close_button(true);
+
+        // Add image directory button.
+        let dir_chooser =
+            gtk::FileChooserButton::new("Select Directory", gtk::FileChooserAction::SelectFolder);
+        hb.pack_start(&dir_chooser);
+        window.set_titlebar(Some(&hb));
+
+        // Add email selected button.
+        let email_btn = gtk::Button::new_with_label("Email Selected Photos");
+        hb.pack_start(&email_btn);
+
+        // 2nd level window widget, holds the Layout and allows it to be scrollable.
+        let scrolled_window = gtk::ScrolledWindow::new(NONE_ADJUSTMENT, NONE_ADJUSTMENT);
+        window.add(&scrolled_window);
+
+        // 3rd level window widget, will hold images when a directory is selected. For now set blank with initial size to default w/h.
         let layout = gtk::Layout::new(NONE_ADJUSTMENT, NONE_ADJUSTMENT);
         layout.set_size(DEFAULT_WIDTH as u32, DEFAULT_HEIGHT as u32);
-
-        // ScrolledWindow holds the layout and allows it to be scrollable.
-        let scrolled_window = gtk::ScrolledWindow::new(NONE_ADJUSTMENT, NONE_ADJUSTMENT);
         scrolled_window.add(&layout);
 
-        // Load CSS and set the window style provider.
+        // Set size request based off default w/h and show all windows.
+        let dimensions = Rc::new(RefCell::new((DEFAULT_WIDTH, DEFAULT_HEIGHT)));
+        window.set_size_request(DEFAULT_WIDTH, DEFAULT_HEIGHT);
+        window.show_all();
+
+        Arc::new(Self {
+            window: window,
+            container: layout,
+            dimensions,
+            dir_chooser,
+            email_btn,
+            application: main_app,
+        })
+    }
+
+    fn init_css_providers(app_window: Arc<Self>) {
+        // Load base CSS from file and set the main window style provider.
         let css_provider = gtk::CssProvider::new();
         css_provider
             .load_from_path("/home/cam/Programming/rust/ezr-photo-viewer/src/app.css")
             .expect("failed loading app CSS");
-        StyleContext::add_provider_for_screen(&window.get_screen().unwrap(), &css_provider, 1);
-
-        // Load images and set application images from directory.
-        *main_app.images.borrow_mut() =
-            load_images_for_path("/home/cam/Downloads/desktop_walls");
-
-        // Add layout to our main app window, set the app window size request.
-        window.add(&scrolled_window);
-        window.set_size_request(DEFAULT_WIDTH, DEFAULT_HEIGHT);
-        window.show_all();
-
-        // set dimensions to default w/h
-        let dimensions = Rc::new(RefCell::new((DEFAULT_WIDTH, DEFAULT_HEIGHT)));
-
-        let app_window = Arc::new(Self {
-            window: window,
-            container: layout,
-            dimensions,
-            application: Arc::clone(&main_app),
-        });
-
-        Self::draw_photos(Arc::clone(&app_window));
-        Self::initialize_callbacks(Arc::clone(&app_window));
-        main_app
+        StyleContext::add_provider_for_screen(
+            &app_window.window.get_screen().unwrap(),
+            &css_provider,
+            1,
+        );
     }
 
     fn initialize_callbacks(app_window: Arc<Self>) {
@@ -224,6 +249,20 @@ impl AppWindow {
             gtk::main_quit();
             Inhibit(false)
         });
+
+        // Add callback for when a new directory is selected through the FileChooserButton.
+        app_window
+            .dir_chooser
+            .connect_file_set(clone!(app_window => move |_w| {
+                Self::refresh_image_window(Arc::clone(&app_window))
+            }));
+
+        // Add callback for emailing selected photos.
+        app_window
+            .email_btn
+            .connect_clicked(clone!(app_window => move |_w| {
+                Self::email_selected_images(Arc::clone(&app_window))
+            }));
 
         // Add callback for resizing photos on new window dimensions.
         app_window
@@ -242,9 +281,61 @@ impl AppWindow {
             }));
     }
 
+    // Refresh the image window by trying to load images from the currently selected dir.
+    // If there is no selected dir, display text saying to load a dir to start.
+    fn refresh_image_window(app_window: Arc<Self>) {
+        // Drop any existing images that have been loaded into the application.
+        let mut app_images = app_window.application.images.borrow_mut();
+        if app_images.len() > 0 {
+            *app_images = Vec::new();
+        }
+        // Clear layout container.
+        app_window.container.foreach(|w| w.destroy());
+
+        // If there is a dir selected, load images from it and set the application images to all those loaded.
+        if let Some(path) = app_window.dir_chooser.get_filename() {
+            *app_images = load_images_for_path(path);
+            std::mem::drop(app_images);
+
+            Self::draw_photos(Arc::clone(&app_window));
+        } else {
+            // No selected dir, add a label saying to select one.
+            let label = gtk::Label::new(Some(
+                "No directory selected, select one in the top left corner.",
+            ));
+            app_window.container.add(&label);
+            app_window.window.show_all()
+        }
+    }
+
+    fn email_selected_images(app_window: Arc<Self>) {
+
+        // Thunderbird expects attachments to be formatted like attachment='file:///,file:///,file:///'
+        let mut attachment_str: String = app_window
+            .application
+            .images
+            .borrow()
+            .iter()
+            .filter_map(|i| {
+                match *i.selected.borrow() {
+                    true => Some(format!("file://{},", i.path.to_str().unwrap())),
+                    false => None,
+                }
+            })
+            .collect();
+        // pop trailing comma off
+        attachment_str.pop();
+
+        // Open new thunderbird compose email with attachments selected in it.
+        match std::process::Command::new("thunderbird").arg("--compose").arg(format!("attachment='{}'", attachment_str)).spawn() {
+            Ok(_) => {},
+            Err(e) => eprintln!("Failed to open thunderbird: {:?}", e),
+        }
+        
+    }
+
     // This function will draw/redraw all photos to the layout.
     fn draw_photos(app_window: Arc<Self>) {
-        
         // Row height is determined by the default height/img ratio consts, as this
         // was what was used to initially load the images.
         let row_height = DEFAULT_HEIGHT / IMG_RATIO_TO_APP_HEIGHT;
@@ -262,10 +353,8 @@ impl AppWindow {
         // tracks row items in association with current_row_width
         let mut current_row_items: Vec<&LoadedImage> = Vec::new();
 
-
         let images = app_window.application.images.borrow();
         for img in images.iter() {
-
             // Check if the current image will not fit in the current Vec<Images>
             // If it doesn't, draw the current Vec<Images> and clear it.
             if (img.width() + current_row_width) >= max_width {
@@ -306,7 +395,6 @@ impl AppWindow {
         app_window.window.show_all();
     }
 
-
     /// Takes a row (just a vec of loaded images), and using a given row index, row height, and row spacing
     /// draws it to the given layout, allowing equal space between each image as well as moving the image if
     /// it's already placed somewhere else.
@@ -317,7 +405,6 @@ impl AppWindow {
         row_height: i32,
         row_spacing: i32,
     ) {
-        
         // Get the max width we have for the current row, and determine how much free space there is to
         // divide between images based on the total row already used width.
         let free_space =
@@ -331,7 +418,6 @@ impl AppWindow {
         let pos_y = (row_height * row_index) + row_spacing;
 
         for image in row {
-            
             // Check if image is drawn already, if it is move it, otherwise put it and set drawn to true.
             let mut drawn = image.drawn.borrow_mut();
             match *drawn {
@@ -350,21 +436,18 @@ impl AppWindow {
 }
 
 /// Takes an argument which is a Path, reads it, and returns a vec of LoadedImages created
-/// from all the entries from that directory.
+/// from all the entries from that directory. Todo:// add recursive subdirectory loading.
 fn load_images_for_path<P: AsRef<Path>>(path: P) -> Vec<LoadedImage> {
     read_dir(path)
         .unwrap()
         .filter_map(|e| {
-            if let Err(_) = e {
-                return None;
+            match e {
+                Ok(e) => {
+                    // LoadedImage::new already returns an Option, so no need to match or wrap it.
+                    LoadedImage::new(e.path(), DEFAULT_HEIGHT / IMG_RATIO_TO_APP_HEIGHT)
+                }
+                Err(_) => return None,
             }
-            Some(e.unwrap())
-        })
-        .filter_map(|e| {
-            // LoadedImage already returns a Result so no need to wrap it in Some/None.
-            // Use default height / img ratio to set the image height. This same value is used later to determine row heights.
-            println!("loading: {:?}", e.path());
-            LoadedImage::new(e.path(), DEFAULT_HEIGHT / IMG_RATIO_TO_APP_HEIGHT)
         })
         .collect()
 }
